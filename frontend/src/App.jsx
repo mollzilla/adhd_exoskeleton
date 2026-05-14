@@ -11,6 +11,9 @@ const GoalsMeeting     = lazy(() => import('./forms/GoalsMeeting'));
 const Reflection       = lazy(() => import('./forms/Reflection'));
 const Week1Review      = lazy(() => import('./forms/Week1Review'));
 
+const PatientList      = lazy(() => import('./coach/PatientList'));
+const PatientDashboard = lazy(() => import('./coach/PatientDashboard'));
+
 function Loading() {
   return <div className="spinner">Loading…</div>;
 }
@@ -18,6 +21,13 @@ function Loading() {
 function ProtectedLayout() {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
+  return <Outlet />;
+}
+
+function CoachOnly() {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'coach') return <Navigate to="/" replace />;
   return <Outlet />;
 }
 
@@ -53,6 +63,14 @@ export default function App() {
           } />
           <Route path="/forms/week1-review" element={
             <Suspense fallback={<Loading />}><Week1Review /></Suspense>
+          } />
+        </Route>
+        <Route element={<CoachOnly />}>
+          <Route path="/coach/patients" element={
+            <Suspense fallback={<Loading />}><PatientList /></Suspense>
+          } />
+          <Route path="/coach/patients/:id" element={
+            <Suspense fallback={<Loading />}><PatientDashboard /></Suspense>
           } />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

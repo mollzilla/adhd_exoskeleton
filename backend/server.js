@@ -16,6 +16,7 @@ app.use('/api/forms/postponed-backlog', require('./routes/postponedBacklog'));
 app.use('/api/forms/goals-meeting',   require('./routes/goalsMeeting'));
 app.use('/api/forms/reflection',      require('./routes/reflection'));
 app.use('/api/forms/week1-review',    require('./routes/week1Review'));
+app.use('/api/coach',                 require('./routes/coach'));
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {

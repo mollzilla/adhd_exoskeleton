@@ -20,9 +20,9 @@ function emptyEFMap() {
   return TIME_BLOCKS.map((block) => ({ block, energy: 3, focus: 3, activity: '' }));
 }
 
-function defaultData(today) {
+function defaultData(date) {
   return {
-    report_date: today,
+    report_date: date,
     day_name: '',
     mood_score: 5,
     wake_up_time: '',
@@ -43,6 +43,15 @@ function defaultData(today) {
   };
 }
 
+function normalizeEFMap(saved) {
+  if (saved.energy_focus_map && typeof saved.energy_focus_map === 'string') {
+    saved.energy_focus_map = JSON.parse(saved.energy_focus_map);
+  }
+  if (!Array.isArray(saved.energy_focus_map) || saved.energy_focus_map.length === 0) {
+    saved.energy_focus_map = emptyEFMap();
+  }
+}
+
 export default function DailyReport() {
   const { user } = useAuth();
   const today = new Date().toISOString().slice(0, 10);
@@ -50,8 +59,9 @@ export default function DailyReport() {
 
   const [formData, setFormData] = useState(() => defaultData(today));
   const [status, setStatus] = useState('draft');
+  const [view, setView] = useState('loading'); // 'loading' | 'form' | 'success'
+  const [wasSubmitted, setWasSubmitted] = useState(false);
   const [step, setStep] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const { lastSaved, loadDraft, clearDraft } = useAutoSave(STORAGE_KEY, formData);
@@ -64,21 +74,40 @@ export default function DailyReport() {
       try {
         const saved = await api.get(`/forms/daily-report?date=${today}`);
         if (saved) {
-          if (saved.energy_focus_map && typeof saved.energy_focus_map === 'string') {
-            saved.energy_focus_map = JSON.parse(saved.energy_focus_map);
-          }
-          if (!Array.isArray(saved.energy_focus_map) || saved.energy_focus_map.length === 0) {
-            saved.energy_focus_map = emptyEFMap();
-          }
+          normalizeEFMap(saved);
           setFormData(saved);
           setStatus(saved.status);
+          if (saved.status === 'submitted') {
+            setWasSubmitted(true);
+            setView('success');
+            return;
+          }
         }
       } catch { /* network error — use draft */ }
-      finally { setLoading(false); }
+
+      setView('form');
     }
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleDateChange(newDate) {
+    try {
+      const saved = await api.get(`/forms/daily-report?date=${newDate}`);
+      if (saved) {
+        normalizeEFMap(saved);
+        setFormData(saved);
+        setStatus(saved.status);
+        setWasSubmitted(saved.status === 'submitted');
+      } else {
+        setFormData(defaultData(newDate));
+        setStatus('draft');
+        setWasSubmitted(false);
+      }
+    } catch {
+      setFormData((f) => ({ ...f, report_date: newDate }));
+    }
+  }
 
   function set(field) {
     return (val) => setFormData((f) => ({ ...f, [field]: val }));
@@ -94,6 +123,13 @@ export default function DailyReport() {
   }
 
   async function save(submitting) {
+    if (submitting && wasSubmitted) {
+      const ok = window.confirm(
+        `You already submitted a report for ${formData.report_date}. This will overwrite it. Continue?`
+      );
+      if (!ok) return;
+    }
+
     setError('');
     setStatus('saving');
     try {
@@ -102,21 +138,83 @@ export default function DailyReport() {
         status: submitting ? 'submitted' : 'draft',
       });
       setStatus(submitting ? 'submitted' : 'draft');
-      if (submitting) clearDraft();
+      if (submitting) {
+        clearDraft();
+        setWasSubmitted(true);
+        setView('success');
+      }
     } catch (err) {
       setError(err.message);
       setStatus('error');
     }
   }
 
-  if (loading) return <div className="spinner">Loading…</div>;
+  if (view === 'loading') return <div className="spinner">Loading…</div>;
 
+  // ── Success screen ──────────────────────────────────────────────
+  if (view === 'success') {
+    return (
+      <FormWrapper title="Daily Self-Report" status="submitted">
+        <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
+          <div style={{ fontSize: '3.5rem', marginBottom: 12 }}>✓</div>
+          <h2 style={{ color: 'var(--success)', marginBottom: 8 }}>Report submitted</h2>
+          <p className="muted" style={{ marginBottom: 4 }}>{formData.report_date}</p>
+          {formData.mood_score && (
+            <p className="muted" style={{ marginBottom: 28 }}>Mood: {formData.mood_score} / 10</p>
+          )}
+          <div className="btn-row" style={{ justifyContent: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => { setStep(0); setView('form'); }}
+            >
+              Edit this report
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={async () => {
+                const fresh = defaultData(today);
+                setFormData(fresh);
+                setStatus('draft');
+                setWasSubmitted(false);
+                setStep(0);
+                try {
+                  const saved = await api.get(`/forms/daily-report?date=${today}`);
+                  if (saved) {
+                    normalizeEFMap(saved);
+                    setFormData(saved);
+                    setStatus(saved.status);
+                    setWasSubmitted(saved.status === 'submitted');
+                    if (saved.status === 'submitted') return;
+                  }
+                } catch { /* ok */ }
+                setView('form');
+              }}
+            >
+              New day →
+            </button>
+          </div>
+        </div>
+      </FormWrapper>
+    );
+  }
+
+  // ── Form ────────────────────────────────────────────────────────
   const f = formData;
 
   return (
     <FormWrapper title="Daily Self-Report" status={status} lastSaved={lastSaved}>
-      <Stepper steps={STEPS} current={step} onChange={setStep} />
+      {wasSubmitted && (
+        <div style={{
+          background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 8,
+          padding: '10px 14px', marginBottom: 16, fontSize: '.88rem', color: '#92400E',
+        }}>
+          You already submitted a report for this day. Submitting again will overwrite it.
+        </div>
+      )}
 
+      <Stepper steps={STEPS} current={step} onChange={setStep} />
       {error && <div className="error-msg">{error}</div>}
 
       {/* Step 0 – Header */}
@@ -124,11 +222,16 @@ export default function DailyReport() {
         <div className="card">
           <div className="field">
             <label>Date</label>
-            <input type="date" value={f.report_date} onChange={(e) => set('report_date')(e.target.value)} />
+            <input
+              type="date"
+              value={f.report_date}
+              onChange={(e) => handleDateChange(e.target.value)}
+            />
           </div>
           <div className="field">
             <label>Day name</label>
-            <input type="text" placeholder="e.g. Monday" value={f.day_name} onChange={(e) => set('day_name')(e.target.value)} />
+            <input type="text" placeholder="e.g. Monday" value={f.day_name}
+              onChange={(e) => set('day_name')(e.target.value)} />
           </div>
           <div className="field">
             <label>Overall mood today — {f.mood_score}/10</label>
@@ -147,14 +250,16 @@ export default function DailyReport() {
         <div className="card">
           <div className="field">
             <label>Wake-up time</label>
-            <input type="time" value={f.wake_up_time} onChange={(e) => set('wake_up_time')(e.target.value)} />
+            <input type="time" value={f.wake_up_time}
+              onChange={(e) => set('wake_up_time')(e.target.value)} />
           </div>
           <div className="field">
             <label>First 30 minutes — what did you do?</label>
-            <textarea value={f.first_30min} onChange={(e) => set('first_30min')(e.target.value)} placeholder="Describe how you started your day…" />
+            <textarea value={f.first_30min} onChange={(e) => set('first_30min')(e.target.value)}
+              placeholder="Describe how you started your day…" />
           </div>
           <h3 style={{ marginBottom: 12 }}>Top 3 tasks you intended to do</h3>
-          {[1,2,3].map((n) => (
+          {[1, 2, 3].map((n) => (
             <div className="field" key={n}>
               <label>Task {n}</label>
               <input type="text" value={f[`intended_task_${n}`]}
@@ -162,7 +267,7 @@ export default function DailyReport() {
             </div>
           ))}
           <h3 style={{ marginBottom: 12 }}>Top 3 tasks you actually did</h3>
-          {[1,2,3].map((n) => (
+          {[1, 2, 3].map((n) => (
             <div className="field" key={n}>
               <label>Task {n}</label>
               <input type="text" value={f[`done_task_${n}`]}
@@ -171,7 +276,8 @@ export default function DailyReport() {
           ))}
           <div className="field">
             <label>Why was there a difference? (or what made you stay on track?)</label>
-            <textarea value={f.task_difference_reason} onChange={(e) => set('task_difference_reason')(e.target.value)} />
+            <textarea value={f.task_difference_reason}
+              onChange={(e) => set('task_difference_reason')(e.target.value)} />
           </div>
         </div>
       )}
@@ -232,7 +338,8 @@ export default function DailyReport() {
           </div>
           <div className="field">
             <label>What triggered the hyperfocus?</label>
-            <input type="text" value={f.hyperfocus_trigger} onChange={(e) => set('hyperfocus_trigger')(e.target.value)} />
+            <input type="text" value={f.hyperfocus_trigger}
+              onChange={(e) => set('hyperfocus_trigger')(e.target.value)} />
           </div>
           <div className="field">
             <label>Avoidance or procrastination moment</label>
@@ -246,11 +353,13 @@ export default function DailyReport() {
         <div className="card">
           <div className="field">
             <label>Where did you work/spend most of your day?</label>
-            <input type="text" value={f.work_location} onChange={(e) => set('work_location')(e.target.value)} />
+            <input type="text" value={f.work_location}
+              onChange={(e) => set('work_location')(e.target.value)} />
           </div>
           <div className="field">
             <label>Was it helpful? Why or why not?</label>
-            <textarea value={f.location_helpful} onChange={(e) => set('location_helpful')(e.target.value)} />
+            <textarea value={f.location_helpful}
+              onChange={(e) => set('location_helpful')(e.target.value)} />
           </div>
           <div className="field">
             <label>Sleep hours last night</label>
@@ -277,7 +386,8 @@ export default function DailyReport() {
           </div>
           <div className="field">
             <label>Any notes on food / movement</label>
-            <textarea value={f.lifestyle_notes} onChange={(e) => set('lifestyle_notes')(e.target.value)} />
+            <textarea value={f.lifestyle_notes}
+              onChange={(e) => set('lifestyle_notes')(e.target.value)} />
           </div>
           <div className="field">
             <label>ADHD medication taken today?</label>
@@ -290,7 +400,8 @@ export default function DailyReport() {
           </div>
           <div className="field">
             <label>Medication notes (optional)</label>
-            <input type="text" value={f.medication_notes} onChange={(e) => set('medication_notes')(e.target.value)} />
+            <input type="text" value={f.medication_notes}
+              onChange={(e) => set('medication_notes')(e.target.value)} />
           </div>
         </div>
       )}
@@ -308,11 +419,13 @@ export default function DailyReport() {
           </div>
           <div className="field">
             <label>One task carried over to tomorrow</label>
-            <input type="text" value={f.carried_task} onChange={(e) => set('carried_task')(e.target.value)} />
+            <input type="text" value={f.carried_task}
+              onChange={(e) => set('carried_task')(e.target.value)} />
           </div>
           <div className="field">
             <label>How do you feel internally right now? (2–3 words)</label>
-            <input type="text" value={f.internal_experience} onChange={(e) => set('internal_experience')(e.target.value)}
+            <input type="text" value={f.internal_experience}
+              onChange={(e) => set('internal_experience')(e.target.value)}
               placeholder="e.g. tired, scattered, proud" />
           </div>
         </div>
@@ -321,10 +434,12 @@ export default function DailyReport() {
       {/* Navigation */}
       <div className="stepper-btns">
         {step > 0 && (
-          <button type="button" className="btn btn-ghost" onClick={() => setStep((s) => s - 1)}>← Back</button>
+          <button type="button" className="btn btn-ghost"
+            onClick={() => setStep((s) => s - 1)}>← Back</button>
         )}
         {step < STEPS.length - 1 ? (
-          <button type="button" className="btn btn-primary" onClick={() => setStep((s) => s + 1)}>Next →</button>
+          <button type="button" className="btn btn-primary"
+            onClick={() => setStep((s) => s + 1)}>Next →</button>
         ) : (
           <>
             <button type="button" className="btn btn-secondary" onClick={() => save(false)}>Save draft</button>
@@ -334,9 +449,8 @@ export default function DailyReport() {
       </div>
 
       {step < STEPS.length - 1 && (
-        <button type="button" className="btn btn-ghost" style={{ marginTop: 10 }} onClick={() => save(false)}>
-          Save draft
-        </button>
+        <button type="button" className="btn btn-ghost" style={{ marginTop: 10 }}
+          onClick={() => save(false)}>Save draft</button>
       )}
     </FormWrapper>
   );

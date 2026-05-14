@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const FORMS = [
@@ -12,6 +12,7 @@ const FORMS = [
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
+  if (user?.role === 'coach') return <Navigate to="/coach/patients" replace />;
 
   return (
     <div className="page">
