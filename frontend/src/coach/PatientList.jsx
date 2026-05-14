@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
+import AddPatientModal from './components/AddPatientModal';
 
 function FormsBar({ count }) {
   return (
@@ -31,9 +32,7 @@ export default function PatientList() {
   const navigate = useNavigate();
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [assignEmail, setAssignEmail] = useState('');
-  const [assignError, setAssignError] = useState('');
-  const [assignLoading, setAssignLoading] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   async function load() {
     try {
@@ -45,18 +44,13 @@ export default function PatientList() {
 
   useEffect(() => { load(); }, []);
 
-  async function assign(e) {
-    e.preventDefault();
-    setAssignError('');
-    setAssignLoading(true);
+  async function removePatient(id, name) {
+    if (!window.confirm(`Remove ${name} from your patient list?`)) return;
     try {
-      await api.post('/coach/patients/assign', { email: assignEmail });
-      setAssignEmail('');
-      await load();
+      await api.delete(`/coach/patients/${id}`);
+      setPatients(ps => ps.filter(p => p.id !== id));
     } catch (err) {
-      setAssignError(err.message);
-    } finally {
-      setAssignLoading(false);
+      alert(err.message);
     }
   }
 
@@ -67,34 +61,37 @@ export default function PatientList() {
           <h1 style={{ fontSize: '1.5rem' }}>Your patients</h1>
           <p className="muted" style={{ fontSize: '.88rem' }}>Signed in as {user?.name}</p>
         </div>
-        <button className="btn btn-ghost" style={{ width: 'auto', padding: '10px 16px' }} onClick={logout}>
-          Sign out
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" style={{ width: 'auto', padding: '10px 18px' }} onClick={() => setShowModal(true)}>
+            + Add patient
+          </button>
+          <button className="btn btn-ghost" style={{ width: 'auto', padding: '10px 16px' }} onClick={logout}>
+            Sign out
+          </button>
+        </div>
       </div>
-
-      <form className="assign-form" onSubmit={assign}>
-        <input
-          type="email"
-          placeholder="Patient email address"
-          value={assignEmail}
-          onChange={(e) => setAssignEmail(e.target.value)}
-          required
-        />
-        <button type="submit" className="btn btn-primary" style={{ width: 'auto' }} disabled={assignLoading}>
-          {assignLoading ? 'Adding…' : '+ Add patient'}
-        </button>
-      </form>
-      {assignError && <div className="error-msg" style={{ marginBottom: 16 }}>{assignError}</div>}
 
       {loading ? (
         <div className="spinner">Loading…</div>
       ) : patients.length === 0 ? (
-        <div className="empty-state">No patients assigned yet. Add one above.</div>
+        <div className="empty-state">
+          <p style={{ marginBottom: 16 }}>No patients assigned yet.</p>
+          <button className="btn btn-primary" style={{ width: 'auto', margin: '0 auto' }} onClick={() => setShowModal(true)}>
+            + Add your first patient
+          </button>
+        </div>
       ) : (
         <div className="patient-grid">
           {patients.map((p) => (
             <Link key={p.id} to={`/coach/patients/${p.id}`} className="patient-card">
-              <h2>{p.name}</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <h2>{p.name}</h2>
+                <button
+                  className="remove-patient-btn"
+                  title="Remove patient"
+                  onClick={e => { e.preventDefault(); e.stopPropagation(); removePatient(p.id, p.name); }}
+                >✕</button>
+              </div>
               <p className="muted" style={{ fontSize: '.82rem' }}>{p.email}</p>
               <p className="muted" style={{ fontSize: '.8rem' }}>{timeAgo(p.last_activity)}</p>
               <FormsBar count={p.forms_submitted} />
@@ -106,6 +103,13 @@ export default function PatientList() {
             </Link>
           ))}
         </div>
+      )}
+
+      {showModal && (
+        <AddPatientModal
+          onClose={() => setShowModal(false)}
+          onSuccess={async () => { setShowModal(false); setLoading(true); await load(); }}
+        />
       )}
     </div>
   );

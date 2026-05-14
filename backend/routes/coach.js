@@ -27,6 +27,41 @@ router.post('/patients/assign', async (req, res) => {
   }
 });
 
+// Assign patient — POST /api/coach/patients  { email }
+router.post('/patients', async (req, res) => {
+  const email = (req.body.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+
+  try {
+    const { rows } = await db.query(
+      'SELECT id, role FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (!rows.length)              return res.status(404).json({ error: 'No account found with that email' });
+    if (rows[0].role !== 'patient') return res.status(422).json({ error: 'That account is not a patient' });
+    if (rows[0].id === req.user.id) return res.status(422).json({ error: 'You cannot assign yourself' });
+
+    const patientId = rows[0].id;
+
+    // One active coach per patient — check without exposing who the other coach is
+    const { rows: active } = await db.query(
+      'SELECT 1 FROM coach_patients WHERE patient_id = $1 AND removed_at IS NULL',
+      [patientId]
+    );
+    if (active.length) return res.status(409).json({ error: 'This patient is already assigned to a coach' });
+
+    await db.query(
+      'INSERT INTO coach_patients (coach_id, patient_id) VALUES ($1, $2)',
+      [req.user.id, patientId]
+    );
+    res.status(201).json({ success: true, patient_id: patientId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // List assigned patients with activity summary
 router.get('/patients', async (req, res) => {
   try {
@@ -54,7 +89,7 @@ router.get('/patients', async (req, res) => {
              AND created_at > NOW() - INTERVAL '7 days') AS recent_notes_count
       FROM coach_patients cp
       JOIN users u ON u.id = cp.patient_id
-      WHERE cp.coach_id = $1
+      WHERE cp.coach_id = $1 AND cp.removed_at IS NULL
       ORDER BY last_activity DESC NULLS LAST
     `, [req.user.id]);
     res.json(rows);
@@ -67,6 +102,22 @@ router.get('/patients', async (req, res) => {
 // ── Per-patient sub-router ───────────────────────────────────────────────────
 const pr = require('express').Router({ mergeParams: true });
 pr.use(requireAssigned);
+
+// Soft-delete: remove patient from this coach's list
+pr.delete('/', async (req, res) => {
+  try {
+    const { rowCount } = await db.query(
+      `UPDATE coach_patients
+         SET removed_at = NOW()
+       WHERE coach_id = $1 AND patient_id = $2 AND removed_at IS NULL`,
+      [req.user.id, req.params.id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Assignment not found' });
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // Patient header info
 pr.get('/', async (req, res) => {

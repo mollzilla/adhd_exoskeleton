@@ -73,35 +73,47 @@ function ReportDocument({ r }) {
   );
 }
 
+// Normalize any date value to "YYYY-MM-DD" so comparisons and URLs are stable
+function toDateStr(val) {
+  if (!val) return '';
+  return String(val).slice(0, 10);
+}
+
 export default function DailyReportsTab({ patientId }) {
-  const [history, setHistory]           = useState([]);
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [report, setReport]             = useState(null);
-  const [loadingList, setLoadingList]   = useState(true);
+  const [history, setHistory]             = useState([]);
+  const [selectedDate, setSelectedDate]   = useState(null);
+  const [report, setReport]               = useState(null);
+  const [loadingList, setLoadingList]     = useState(true);
   const [loadingReport, setLoadingReport] = useState(false);
+  const [fetchError, setFetchError]       = useState(null);
   const latestDateRef = useRef(null);
 
   useEffect(() => {
     api.get(`/coach/patients/${patientId}/daily-reports`)
-      .then(setHistory)
+      .then(data => setHistory(data.map(e => ({ ...e, report_date: toDateStr(e.report_date) }))))
       .finally(() => setLoadingList(false));
   }, [patientId]);
 
   async function selectDate(date) {
-    setSelectedDate(date);
-    latestDateRef.current = date;
+    const d = toDateStr(date);
+    setSelectedDate(d);
+    latestDateRef.current = d;
     setLoadingReport(true);
     setReport(null);
+    setFetchError(null);
     try {
-      const data = await api.get(`/coach/patients/${patientId}/daily-reports/${date}`);
-      if (latestDateRef.current !== date) return; // stale response
+      const data = await api.get(`/coach/patients/${patientId}/daily-reports/${d}`);
+      if (latestDateRef.current !== d) return; // stale — user already clicked another date
       if (data.energy_focus_map && typeof data.energy_focus_map === 'string') {
         data.energy_focus_map = JSON.parse(data.energy_focus_map);
       }
       setReport(data);
-    } catch { /* show nothing */ }
-    finally {
-      if (latestDateRef.current === date) setLoadingReport(false);
+    } catch (err) {
+      if (latestDateRef.current === d) {
+        setFetchError(err.message || 'Could not load report');
+      }
+    } finally {
+      if (latestDateRef.current === d) setLoadingReport(false);
     }
   }
 
@@ -130,8 +142,13 @@ export default function DailyReportsTab({ patientId }) {
       </div>
 
       <div className="report-panel">
-        {!selectedDate && <div className="empty-state">← Select a date</div>}
+        {!selectedDate && (
+          <div className="empty-state">← Select a date to view the full report</div>
+        )}
         {loadingReport && <div className="spinner">Loading report…</div>}
+        {fetchError && (
+          <div className="error-msg" style={{ margin: 0 }}>{fetchError}</div>
+        )}
         {report && !loadingReport && <ReportDocument r={report} />}
       </div>
     </div>

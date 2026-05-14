@@ -18,7 +18,7 @@ async function requireAssigned(req, res, next) {
   if (!patientId || isNaN(patientId)) return res.status(400).json({ error: 'Invalid patient ID' });
   try {
     const { rows } = await db.query(
-      'SELECT 1 FROM coach_patients WHERE coach_id = $1 AND patient_id = $2',
+      'SELECT 1 FROM coach_patients WHERE coach_id = $1 AND patient_id = $2 AND removed_at IS NULL',
       [req.user.id, patientId]
     );
     if (!rows.length) return res.status(403).json({ error: 'Forbidden' });
